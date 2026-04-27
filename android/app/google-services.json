@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "298536464862",
+    "project_id": "ppb-26",
+    "storage_bucket": "ppb-26.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:298536464862:android:a2bc1a7e5463b67d84ad4f",
+        "android_client_info": {
+          "package_name": "com.example.ppb_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAkX5gWtKEwwl-qFP8CMMEJtFkV5-uiaPY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:298536464862:android:cc14bc8eeecee1f584ad4f",
+        "android_client_info": {
+          "package_name": "com.example.stego_snap"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAkX5gWtKEwwl-qFP8CMMEJtFkV5-uiaPY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
