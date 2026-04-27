@@ -8,7 +8,7 @@
 
 ## Overview
 
-**StegoSnap** adalah aplikasi berbasis **mobile (Flutter)** dengan backend **FastAPI** yang memungkinkan pengguna untuk menyembunyikan (encode) dan mengungkap (decode) pesan rahasia di dalam gambar menggunakan metode **Reversible Data Hiding (RDH) – Turtle Shell**.
+**StegoSnap** adalah aplikasi berbasis **mobile (Flutter)** dengan backend **FastAPI** yang memungkinkan pengguna untuk menyembunyikan (encode) dan mengungkap (decode) pesan rahasia di dalam gambar menggunakan metode **Turtle Shell**.
 
 Aplikasi ini juga terintegrasi dengan **Firebase Firestore** untuk penyimpanan metadata serta fitur **sharing antar user**.
 
@@ -41,11 +41,11 @@ Aplikasi ini juga terintegrasi dengan **Firebase Firestore** untuk penyimpanan m
 ### Database & Cloud
 
 - Firebase Firestore
+- Supabase
 
 ### Image Processing
 
-- RDH Turtle Shell Algorithm
-- JPEG DCT Processing (jpeglib)
+- Turtle Shell Algorithm
 
 ---
 
