@@ -1,7 +1,5 @@
 # StegoSnap – Secure Image Steganography App
 
-**Team Name:** fanspakbas
-
 | No  | Name              | NRP        |
 | --- | ----------------- | ---------- |
 | 1   | Andi Nur Nabila S | 5025231104 |
@@ -99,9 +97,7 @@ stego_snap/
 
 ## Demo
 
-### 📺 YouTube Demo
-
-Tambahkan link video penjelasan project di sini:
+### YouTube Demo
 
 ```
 https://youtu.be/KGn3BBHyDBY
