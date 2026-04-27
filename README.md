@@ -99,6 +99,4 @@ stego_snap/
 
 ### YouTube Demo
 
-```
 https://youtu.be/KGn3BBHyDBY
-```
