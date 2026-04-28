@@ -17,16 +17,6 @@ RECOVERED_DIR = BASE_DIR / "recovered-images"
 for out_dir in (UPLOADS_DIR, STEGO_DIR, RECOVERED_DIR):
     out_dir.mkdir(parents=True, exist_ok=True)
 
-
-class EncodeRequest(BaseModel):
-    image_path: str
-    secret_data: str
-
-
-class DecodeRequest(BaseModel):
-    stego_image_path: str
-
-
 @app.get("/health")
 def health():
     return {"ok": True}
