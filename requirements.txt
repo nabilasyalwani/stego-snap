@@ -1,0 +1,15 @@
+jpeglib 
+numpy 
+matplotlib 
+opencv-python-headless 
+scipy 
+scikit-image 
+seaborn 
+pandas 
+tqdm 
+import-ipynb 
+pathlib
+pydantic
+fastapi
+uvicorn
+python-multipart
