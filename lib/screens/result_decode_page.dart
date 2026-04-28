@@ -7,11 +7,13 @@ import 'package:stego_snap/widgets/custom_button.dart';
 class ResultDecodePage extends StatelessWidget {
   final String decodedText;
   final String? stegoImagePath;
+  final String? stegoImageTitle;
 
   const ResultDecodePage({
     super.key,
     this.decodedText = 'This is your secret data',
     this.stegoImagePath,
+    this.stegoImageTitle,
   });
 
   @override
@@ -54,17 +56,20 @@ class ResultDecodePage extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             if (stegoImagePath != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Source: $stegoImagePath',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontFamily: 'Poppins',
-                  color: Colors.white70,
-                ),
+              SizedBox(
+                height: 200,
+                child: Image.network(stegoImagePath!, fit: BoxFit.contain),
               ),
             ],
+            const SizedBox(height: 20),
+            Text(
+              stegoImageTitle ?? 'Decoded from your snap',
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                color: Colors.white,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             const SizedBox(height: 20),
             Expanded(
               child: Container(

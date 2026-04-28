@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:stego_snap/screens/nav_page.dart';
 import 'package:stego_snap/screens/result_decode_page.dart';
 import 'package:stego_snap/services/firestore_service.dart';
@@ -26,34 +27,27 @@ class _DecodePageState extends State<DecodePage> {
   bool _isLoading = false;
   File? _selectedImageFile;
   String? _selectedImageUrl;
-  String? _selectedPath;
+  String? _selectedImageTitle;
 
   @override
   void initState() {
     super.initState();
-    _stegoPathController.text = FirestoreService.lastStegoServerPath ?? '';
+    _stegoPathController.text = '';
   }
 
-  Uri _decodePathApiUri() {
+  Uri _decodeApiUri() {
     if (Platform.isAndroid) {
-      return Uri.parse('http://10.0.2.2:8000/decode');
+      return Uri.parse('https://stego-snap.onrender.com/decode');
     }
-    return Uri.parse('http://127.0.0.1:8000/decode');
-  }
-
-  Uri _decodeFileApiUri() {
-    if (Platform.isAndroid) {
-      return Uri.parse('http://10.0.2.2:8000/decode_file');
-    }
-    return Uri.parse('http://127.0.0.1:8000/decode_file');
+    return Uri.parse('https://stego-snap.onrender.com/decode');
   }
 
   Future<void> _selectImageFromGallery() async {
     final pickedFile = await _imagePicker.pickImage(
       source: ImageSource.gallery,
     );
-    if (pickedFile == null) return;
 
+    if (pickedFile == null) return;
     if (!mounted) return;
 
     setState(() {
@@ -69,9 +63,12 @@ class _DecodePageState extends State<DecodePage> {
     );
   }
 
-  Future<void> _useLastEncodedPath() async {
+  Future<void> _useLastEncodeSnap() async {
     final latestSnap = await _firestoreService.getLatestSnapForCurrentUser();
-    final path = (latestSnap?['stegoServerPath'] as String?)?.trim();
+    final path = (latestSnap?['stegoImage'] ?? latestSnap?['stegoImageUrl'])
+        ?.toString()
+        .trim();
+    final title = (latestSnap?['title'] ?? '').toString().trim();
 
     if (path == null || path.isEmpty) {
       await NotificationService.createNotification(
@@ -84,28 +81,49 @@ class _DecodePageState extends State<DecodePage> {
 
     if (!mounted) return;
 
-    setState(() {
-      _selectedPath = path;
-      _stegoPathController.text = path;
-      _selectedImageFile = null;
-      _selectedImageUrl = null;
-    });
+    try {
+      final response = await http.get(Uri.parse(path));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Failed to download image (${response.statusCode})');
+      }
+      final tempDir = await getTemporaryDirectory();
+      final fileName = Uri.parse(path).pathSegments.isNotEmpty
+          ? Uri.parse(path).pathSegments.last
+          : 'latest_stego_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final tempFile = File('${tempDir.path}/$fileName');
+      await tempFile.writeAsBytes(response.bodyBytes);
 
-    await NotificationService.createNotification(
-      id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
-      title: 'Select Latest Path',
-      body: 'Latest encoded image path selected and ready for decode.',
-    );
+      if (!mounted) return;
+
+      setState(() {
+        _selectedImageFile = tempFile;
+        _stegoPathController.text = tempFile.path;
+        _selectedImageUrl = path;
+        _selectedImageTitle = title;
+      });
+
+      await NotificationService.createNotification(
+        id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+        title: 'Select Latest Path',
+        body: 'Latest encoded image downloaded and ready for decode.',
+      );
+    } catch (e) {
+      await NotificationService.createNotification(
+        id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+        title: 'Decode Path Failed',
+        body: e.toString(),
+      );
+    }
   }
 
   Future<void> _decodeImage() async {
     final stegoPath = _stegoPathController.text.trim();
 
-    if (_selectedImageFile == null && stegoPath == null) {
+    if (_selectedImageFile == null && stegoPath.isEmpty) {
       await NotificationService.createNotification(
         id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
         title: 'Decode Failed',
-        body: 'Please choose an image first.',
+        body: 'No image selected or path provided for decoding.',
       );
       return;
     }
@@ -116,9 +134,8 @@ class _DecodePageState extends State<DecodePage> {
 
     try {
       late http.Response response;
-
       if (_selectedImageFile != null) {
-        final request = http.MultipartRequest('POST', _decodeFileApiUri());
+        final request = http.MultipartRequest('POST', _decodeApiUri());
         request.files.add(
           await http.MultipartFile.fromPath('file', _selectedImageFile!.path),
         );
@@ -126,7 +143,7 @@ class _DecodePageState extends State<DecodePage> {
         response = await http.Response.fromStream(streamedResponse);
       } else {
         response = await http.post(
-          _decodePathApiUri(),
+          _decodeApiUri(),
           headers: const {'Content-Type': 'application/json'},
           body: jsonEncode({'stego_image_path': stegoPath}),
         );
@@ -157,7 +174,9 @@ class _DecodePageState extends State<DecodePage> {
         MaterialPageRoute(
           builder: (context) => ResultDecodePage(
             decodedText: decodedText,
-            stegoImagePath: _selectedImageFile?.path ?? stegoPath,
+            stegoImagePath:
+                _selectedImageUrl ?? _selectedImageFile?.path ?? stegoPath,
+            stegoImageTitle: _selectedImageTitle,
           ),
         ),
       );
@@ -273,7 +292,7 @@ class _DecodePageState extends State<DecodePage> {
               ),
               _buildActionItem(
                 icon: Icons.folder_copy_outlined,
-                onTap: _useLastEncodedPath,
+                onTap: _useLastEncodeSnap,
               ),
             ],
           ),

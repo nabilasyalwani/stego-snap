@@ -4,9 +4,6 @@ import 'package:stego_snap/services/notification_service.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
-  static String? lastStegoServerPath;
-  static String? lastSnapId;
-  static String? lastSnapTitle;
 
   User? get _currentUser => FirebaseAuth.instance.currentUser;
 
@@ -20,76 +17,59 @@ class FirestoreService {
 
   Future<String> createSnap({
     required String title,
-    required String localImagePath,
-    required String imageSource,
-    String? stegoServerPath,
-    String? stegoFileName,
+    required String stegoImageUrl,
   }) async {
     final user = _currentUser;
     if (user == null) {
       throw Exception('User not logged in');
     }
 
-    final snapsRef = _db.collection('snaps').doc();
+    final stegoFilesRef = _db.collection('stego_files').doc();
     final userRef = _db.collection('users').doc(user.uid);
 
-    await snapsRef.set({
-      'snapsId': snapsRef.id,
+    await stegoFilesRef.set({
+      'ownerId': user.uid,
       'userId': user.uid,
-      'userRef': userRef,
+      'ownerRef': userRef,
       'title': title.trim(),
-      'localImagePath': localImagePath,
-      'imageSource': imageSource,
-      if (stegoServerPath != null) 'stegoServerPath': stegoServerPath,
-      if (stegoFileName != null) 'stegoFileName': stegoFileName,
+      'stegoImageUrl': stegoImageUrl.trim(),
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
-    if (stegoServerPath != null) {
-      lastStegoServerPath = stegoServerPath;
-    }
-
-    lastSnapId = snapsRef.id;
-    lastSnapTitle = title.trim();
-
-    await userRef.set({
-      'lastSnapAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-
     await _notify(
       title: 'Snap Saved',
-      body: 'Snap saved to collection snaps with id: ${snapsRef.id}',
+      body: 'Snap saved to collection stegoFiles with id: ${stegoFilesRef.id}',
     );
 
-    return snapsRef.id;
+    return stegoFilesRef.id;
   }
 
   Future<void> renameSnapById({
-    required String snapId,
+    required String stegoFileId,
     required String newTitle,
   }) async {
-    if (snapId.trim().isEmpty) {
+    if (stegoFileId.trim().isEmpty) {
       throw Exception('Snap id is required');
     }
 
-    await _db.collection('snaps').doc(snapId).update({
+    final docRef = _db.collection('stego_files').doc(stegoFileId);
+
+    await docRef.update({
       'title': newTitle.trim(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
-
-    lastSnapTitle = newTitle.trim();
   }
 
   Future<void> shareSnapToUserId({
-    required String snapId,
-    required String userId,
+    required String stegoFileId,
+    required String toUserId,
   }) async {
-    if (snapId.trim().isEmpty) {
-      throw Exception('Snap id is required');
+    if (stegoFileId.trim().isEmpty) {
+      throw Exception('Stego file id is required');
     }
 
-    final targetUserId = userId.trim();
+    final targetUserId = toUserId.trim();
     if (targetUserId.isEmpty) {
       throw Exception('User id is required');
     }
@@ -103,162 +83,146 @@ class FirestoreService {
       throw Exception('Cannot share snap to yourself');
     }
 
-    final snapDoc = await _db.collection('snaps').doc(snapId).get();
+    final snapDoc = await _db.collection('stego_files').doc(stegoFileId).get();
     if (!snapDoc.exists) {
       throw Exception('Snap not found');
     }
 
     final snapData = snapDoc.data() ?? <String, dynamic>{};
-    final senderDoc = await _db.collection('users').doc(sender.uid).get();
-    final senderData = senderDoc.data() ?? <String, dynamic>{};
 
-    final senderName =
-        (senderData['displayName'] ??
-                sender.displayName ??
-                sender.email ??
-                'User')
-            .toString();
-    final senderProfileImage = (senderData['profileImage'] ?? '').toString();
+    final sharedFilesRef = _db.collection('shared_files').doc();
 
-    final notificationRef = _db
-        .collection('users')
-        .doc(targetUserId)
-        .collection('shareNotifications')
-        .doc();
-
-    await _db.collection('snaps').doc(snapId).update({
-      'sharedToUserIds': FieldValue.arrayUnion([targetUserId]),
-      'lastSharedAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-
-    await notificationRef.set({
-      'notificationId': notificationRef.id,
-      'type': 'share',
-      'status': 'pending',
-      'snapId': snapId,
+    await sharedFilesRef.set({
+      'toUserID': targetUserId,
       'fromUserId': sender.uid,
-      'fromUserName': senderName,
-      'fromUserProfileImage': senderProfileImage,
-      'snapTitle': (snapData['title'] ?? 'Untitled').toString(),
-      'stegoServerPath': (snapData['stegoServerPath'] ?? '').toString(),
-      'stegoFileName': (snapData['stegoFileName'] ?? '').toString(),
+      'stegoFileId': stegoFileId,
+      'stegoTitle': snapData['title'],
+      'stegoImageUrl': snapData['stegoImage'] ?? snapData['stegoImageUrl'],
+      'status': 'pending',
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> getPendingShareNotifications() {
+  Future<String?> getCurrentUserStegoId() async {
     final user = _currentUser;
     if (user == null) {
+      return null;
+    }
+
+    final userDoc = await _db.collection('users').doc(user.uid).get();
+    final userData = userDoc.data();
+    return (userData?['idStegoSnap'] ?? '').toString().trim();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> getPendingShareFiles(
+    String recipientStegoId,
+  ) {
+    final normalizedRecipientStegoId = recipientStegoId.trim();
+    if (normalizedRecipientStegoId.isEmpty) {
       return const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
     }
 
     return _db
-        .collection('users')
-        .doc(user.uid)
-        .collection('shareNotifications')
+        .collection('shared_files')
+        .where('toUserID', isEqualTo: normalizedRecipientStegoId)
         .where('status', isEqualTo: 'pending')
-        .orderBy('createdAt', descending: true)
         .snapshots();
   }
 
-  Future<void> declineShareNotification(String notificationId) async {
+  Future<void> declineSharedFiles(String shareFileId) async {
     final user = _currentUser;
     if (user == null) {
       throw Exception('User not logged in');
     }
 
-    await _db
-        .collection('users')
-        .doc(user.uid)
-        .collection('shareNotifications')
-        .doc(notificationId)
-        .update({
-          'status': 'declined',
-          'updatedAt': FieldValue.serverTimestamp(),
-          'disabledAt': FieldValue.serverTimestamp(),
-        });
+    await _db.collection('shared_files').doc(shareFileId).update({
+      'status': 'declined',
+      'updatedAt': FieldValue.serverTimestamp(),
+      'disabledAt': FieldValue.serverTimestamp(),
+    });
   }
 
-  Future<void> acceptShareNotification(String notificationId) async {
+  Future<void> acceptShareFiles(String shareFileId) async {
     final user = _currentUser;
     if (user == null) {
       throw Exception('User not logged in');
     }
 
-    final notificationRef = _db
-        .collection('users')
-        .doc(user.uid)
-        .collection('shareNotifications')
-        .doc(notificationId);
+    final sharedFilesRef = _db.collection('shared_files').doc(shareFileId);
 
-    final notificationDoc = await notificationRef.get();
-    if (!notificationDoc.exists) {
-      throw Exception('Notification not found');
+    final shareFileDoc = await sharedFilesRef.get();
+    if (!shareFileDoc.exists) {
+      throw Exception('Share file not found');
     }
 
-    final notificationData = notificationDoc.data() ?? <String, dynamic>{};
-    final sourceSnapId = (notificationData['snapId'] ?? '').toString();
-    if (sourceSnapId.isEmpty) {
-      throw Exception('Source snap id is missing');
+    final shareData = shareFileDoc.data() ?? <String, dynamic>{};
+    final stegoFileId = (shareData['stegoFileId'] ?? '').toString();
+    if (stegoFileId.isEmpty) {
+      throw Exception('Stego file id is missing');
     }
 
-    final sourceSnapDoc = await _db.collection('snaps').doc(sourceSnapId).get();
-    if (!sourceSnapDoc.exists) {
-      throw Exception('Source snap not found');
+    final stegoFileRef = _db.collection('stego_files').doc(stegoFileId);
+    final stegoFileDoc = await stegoFileRef.get();
+    if (!stegoFileDoc.exists) {
+      throw Exception('Stego file not found');
     }
 
-    final sourceData = sourceSnapDoc.data() ?? <String, dynamic>{};
-    final newSnapRef = _db.collection('snaps').doc();
-    final userRef = _db.collection('users').doc(user.uid);
-
-    await newSnapRef.set({
-      'snapsId': newSnapRef.id,
-      'userId': user.uid,
-      'userRef': userRef,
-      'title':
-          (sourceData['title'] ??
-                  notificationData['snapTitle'] ??
-                  'Shared snap')
-              .toString(),
-      'localImagePath': (sourceData['localImagePath'] ?? '').toString(),
-      'imageSource': 'shared',
-      'stegoServerPath':
-          (sourceData['stegoServerPath'] ??
-                  notificationData['stegoServerPath'] ??
-                  '')
-              .toString(),
-      'stegoFileName':
-          (sourceData['stegoFileName'] ??
-                  notificationData['stegoFileName'] ??
-                  '')
-              .toString(),
-      'sharedFromUserId': (notificationData['fromUserId'] ?? '').toString(),
-      'sourceSnapId': sourceSnapId,
-      'isSharedReceived': true,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-
-    await notificationRef.update({
+    await sharedFilesRef.update({
       'status': 'accepted',
-      'acceptedSnapId': newSnapRef.id,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  Future<Map<String, dynamic>> loadShareNotificationData(
+    Map<String, dynamic> notification,
+  ) async {
+    final senderId = (notification['fromUserId'] ?? '').toString();
+    final stegoFileId = (notification['stegoFileId'] ?? '').toString();
+
+    final senderDoc = senderId.isEmpty
+        ? null
+        : await _db.collection('users').doc(senderId).get();
+    final stegoDoc = stegoFileId.isEmpty
+        ? null
+        : await _db.collection('stego_files').doc(stegoFileId).get();
+
+    final senderData = senderDoc?.data() ?? <String, dynamic>{};
+    final stegoData = stegoDoc?.data() ?? <String, dynamic>{};
+
+    final senderName = (senderData['displayName'] ?? senderId).toString();
+
+    return {
+      ...notification,
+      'senderName': senderName.isNotEmpty ? senderName : 'Unknown User',
+      'senderProfileImage': senderData['profileImage'] ?? '',
+      'stegoImage': stegoData['stegoImage'] ?? '',
+    };
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> getAllSnap() {
-    final user = _currentUser;
-
-    if (user == null) {
+    final currentUserId = _currentUser?.uid;
+    if (currentUserId == null) {
       return const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
     }
 
     return _db
-        .collection('snaps')
-        .where('userId', isEqualTo: user.uid)
+        .collection('stego_files')
+        .where('ownerId', isEqualTo: currentUserId)
         .snapshots();
+  }
+
+  Future<void> updateShareStatus(String shareFileId, String status) async {
+    final user = _currentUser;
+    if (user == null) {
+      throw Exception('User not logged in');
+    }
+
+    await _db.collection('shared_files').doc(shareFileId).update({
+      'status': status,
+      'updatedAt': FieldValue.serverTimestamp(),
+      if (status == 'declined') 'disabledAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<Map<String, dynamic>?> getLatestSnapForCurrentUser() async {
@@ -267,38 +231,37 @@ class FirestoreService {
       return null;
     }
 
-    final query = await _db
-        .collection('snaps')
-        .where('userId', isEqualTo: user.uid)
-        .orderBy('createdAt', descending: true)
-        .limit(1)
-        .get();
+    final query = await _db.collection('stego_files').get();
 
-    if (query.docs.isEmpty) {
-      return null;
+    for (final doc in query.docs) {
+      final data = doc.data();
+      final ownerId = (data['ownerId'] ?? data['userId'] ?? '').toString();
+      if (ownerId == user.uid) {
+        return {...data, 'id': doc.id};
+      }
     }
 
-    final doc = query.docs.first;
-    return {...doc.data(), 'id': doc.id};
+    return null;
   }
 
-  Future<void> deleteSnap(String snapsId) async {
-    if (snapsId.trim().isEmpty) {
+  Future<void> deleteSnap(String stegoFilesId) async {
+    if (stegoFilesId.trim().isEmpty) {
       throw Exception('Snap id is required');
     }
 
-    await _db.collection('snaps').doc(snapsId).delete();
+    final docRef = _db.collection('stego_files').doc(stegoFilesId);
+    await docRef.delete();
   }
 
   Future<void> updateSnap(
-    String snapsId,
+    String stegoFilesId,
     Map<String, dynamic> updatedData,
   ) async {
-    if (snapsId.trim().isEmpty) {
+    if (stegoFilesId.trim().isEmpty) {
       throw Exception('Snap id is required');
     }
 
-    await _db.collection('snaps').doc(snapsId).update({
+    await _db.collection('stego_files').doc(stegoFilesId).update({
       ...updatedData,
       'updatedAt': FieldValue.serverTimestamp(),
     });

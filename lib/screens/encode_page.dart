@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supabase_flutter;
 import 'package:stego_snap/utils/colors.dart';
 import 'package:stego_snap/screens/nav_page.dart';
 import 'package:stego_snap/screens/result_encode_page.dart';
@@ -23,29 +26,16 @@ class _EncodePageState extends State<EncodePage> {
   final TextEditingController _dataController = TextEditingController();
   final FirestoreService _firestoreService = FirestoreService();
   final ImagePicker _imagePicker = ImagePicker();
-
+  final User? _currentUser = FirebaseAuth.instance.currentUser;
   File? _tempImageFile;
   String? _selectedImageSource;
   bool _isEncoding = false;
 
   Uri _encodeApiUri() {
     if (Platform.isAndroid) {
-      return Uri.parse('http://10.0.2.2:8000/encode');
+      return Uri.parse('https://stego-snap.onrender.com/encode');
     }
-    return Uri.parse('http://127.0.0.1:8000/encode');
-  }
-
-  String _extractFilename(Map<String, String> headers) {
-    final contentDisposition = headers['content-disposition'];
-    if (contentDisposition == null) {
-      return 'stego_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    }
-
-    final match = RegExp(
-      r'filename="?([^";]+)"?',
-    ).firstMatch(contentDisposition);
-    return match?.group(1) ??
-        'stego_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    return Uri.parse('https://stego-snap.onrender.com/encode');
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -96,41 +86,59 @@ class _EncodePageState extends State<EncodePage> {
     try {
       final imagePath = _tempImageFile!.path;
       final request = http.MultipartRequest('POST', _encodeApiUri());
-
       request.files.add(await http.MultipartFile.fromPath('file', imagePath));
       request.fields['secret_data'] = secretData;
-      request.fields['title'] = title;
 
       final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
+      if (streamedResponse.statusCode < 200 ||
+          streamedResponse.statusCode >= 300) {
+        final errorBody = await streamedResponse.stream.bytesToString();
 
-      if (response.statusCode < 200 || response.statusCode >= 300) {
         await NotificationService.createNotification(
           id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
           title: 'Encode Failed',
-          body: 'API encode gagal (${response.statusCode}). ${response.body}',
+          body: 'API encode gagal (${streamedResponse.statusCode}). $errorBody',
         );
         return;
       }
 
+      final responseBytes = await streamedResponse.stream.toBytes();
+      final serverFileName =
+          streamedResponse.headers['x-filename'] ??
+          'stego_${DateTime.now().millisecondsSinceEpoch}.png';
+
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/$serverFileName');
+      await tempFile.writeAsBytes(responseBytes);
+
+      final supabase = supabase_flutter.Supabase.instance.client;
+      final storagePath = '${_currentUser!.uid}/$serverFileName';
+
+      await supabase.storage
+          .from('stego_images')
+          .uploadBinary(
+            storagePath,
+            responseBytes,
+            fileOptions: const supabase_flutter.FileOptions(
+              upsert: true,
+              contentType: 'image/jpeg',
+            ),
+          );
+
+      final publicUrl = supabase.storage
+          .from('stego_images')
+          .getPublicUrl(storagePath);
+
+      final snapId = await _firestoreService.createSnap(
+        title: title,
+        stegoImageUrl: publicUrl,
+      );
+
       await NotificationService.createNotification(
         id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
         title: 'Encode Success',
-        body: 'Image berhasil dikirim ke API encode.',
+        body: 'Image encoded and uploaded successfully.',
       );
-
-      final encodedFileName = _extractFilename(response.headers);
-      final stegoServerPath = 'stego-images/$encodedFileName';
-
-      await _firestoreService.createSnap(
-        title: title,
-        localImagePath: _tempImageFile!.path,
-        imageSource: _selectedImageSource ?? 'unknown',
-        stegoServerPath: stegoServerPath,
-        stegoFileName: encodedFileName,
-      );
-
-      final snapId = FirestoreService.lastSnapId;
 
       if (!mounted) return;
 
@@ -140,12 +148,8 @@ class _EncodePageState extends State<EncodePage> {
           builder: (context) => ResultEncodePage(
             title: title,
             secretData: secretData,
-            encodedImageUrl: _encodeApiUri()
-                .replace(path: '/stego-images/$encodedFileName')
-                .toString(),
-            encodedFileName: encodedFileName,
-            stegoServerPath: stegoServerPath,
-            snapId: snapId,
+            encodedImageUrl: publicUrl,
+            stegoFileId: snapId,
           ),
         ),
       );

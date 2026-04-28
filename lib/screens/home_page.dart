@@ -33,39 +33,31 @@ class _HomePageState extends State<HomePage> {
   String _searchQuery = '';
   Map<String, dynamic>? _activeSnap;
 
+  String _safeFileName(String value, {String fallback = 'encoded_image.jpg'}) {
+    final sanitized = value.trim().replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    return sanitized.isEmpty ? fallback : sanitized;
+  }
+
+  String _snapImageUrl(Map<String, dynamic> snap) {
+    return (snap['stegoImage'] ?? snap['stegoImageUrl'] ?? '')
+        .toString()
+        .trim();
+  }
+
   String _serverBaseUrl() {
     return Platform.isAndroid
         ? 'http://10.0.2.2:8000'
         : 'http://127.0.0.1:8000';
   }
 
-  String? _buildImageUrl(Map<String, dynamic> snap) {
-    final serverPath = (snap['stegoServerPath'] as String?)?.trim();
-    if (serverPath == null || serverPath.isEmpty) {
-      return null;
-    }
-    if (serverPath.startsWith('http')) {
-      return serverPath;
-    }
-    return '${_serverBaseUrl()}/$serverPath';
-  }
-
   Future<void> _tryDownload() async {
     final snap = _activeSnap;
     if (snap == null) return;
 
-    final imageUrl = _buildImageUrl(snap);
-    if (imageUrl == null) {
-      await NotificationService.createNotification(
-        id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
-        title: 'Download Failed',
-        body: 'Encoded image URL is not available for this snap.',
-      );
-      return;
-    }
+    final stegoImageUrl = _snapImageUrl(snap);
 
     try {
-      final response = await http.get(Uri.parse(imageUrl));
+      final response = await http.get(Uri.parse(stegoImageUrl));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         await NotificationService.createNotification(
           id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
@@ -75,9 +67,8 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      final fileName =
-          (snap['stegoFileName'] as String?)?.trim().isNotEmpty == true
-          ? snap['stegoFileName'] as String
+      final fileName = (snap['title'] as String?)?.trim().isNotEmpty == true
+          ? _safeFileName(snap['title'].toString())
           : 'encoded_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
       final outputFile = File('${Directory.systemTemp.path}/$fileName');
@@ -120,8 +111,8 @@ class _HomePageState extends State<HomePage> {
 
     try {
       await _firestoreService.shareSnapToUserId(
-        snapId: (snap['snapsId'] ?? snap['id']).toString(),
-        userId: targetUserId,
+        stegoFileId: (snap['stegoFileId'] ?? snap['id']).toString(),
+        toUserId: targetUserId,
       );
 
       await NotificationService.createNotification(
@@ -161,7 +152,7 @@ class _HomePageState extends State<HomePage> {
 
     try {
       await _firestoreService.renameSnapById(
-        snapId: (snap['snapsId'] ?? snap['id']).toString(),
+        stegoFileId: (snap['stegoFileId'] ?? snap['id']).toString(),
         newTitle: newTitle,
       );
 
@@ -188,7 +179,7 @@ class _HomePageState extends State<HomePage> {
 
     try {
       await _firestoreService.deleteSnap(
-        (snap['snapsId'] ?? snap['id']).toString(),
+        (snap['stegoFileId'] ?? snap['id']).toString(),
       );
 
       await NotificationService.createNotification(
@@ -392,8 +383,170 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildSnapGrid() {
+    if (_selectedTab == 1) {
+      return _buildDecodedSnapGrid();
+    }
+    return _buildEncodedSnapGrid();
+  }
+
+  Widget _buildEncodedSnapGrid() {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) {
+      return const SliverToBoxAdapter(
+        child: Text(
+          'No snap data found',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontFamily: 'Poppins',
+          ),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    return FutureBuilder<String?>(
+      future: _firestoreService.getCurrentUserStegoId(),
+      builder: (context, stegoIdSnapshot) {
+        final recipientStegoId = stegoIdSnapshot.data?.trim() ?? '';
+
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('stego_files')
+              .where('ownerId', isEqualTo: currentUserId)
+              .snapshots(),
+          builder: (context, ownSnapshot) {
+            if (ownSnapshot.connectionState == ConnectionState.waiting) {
+              return const SliverToBoxAdapter(
+                child: Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                ),
+              );
+            }
+
+            if (ownSnapshot.hasError) {
+              return SliverToBoxAdapter(
+                child: Text(
+                  'Failed to load snaps: ${ownSnapshot.error}',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              );
+            }
+
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: recipientStegoId.isEmpty
+                  ? const Stream<QuerySnapshot<Map<String, dynamic>>>.empty()
+                  : FirebaseFirestore.instance
+                        .collection('shared_files')
+                        .where('toUserID', isEqualTo: recipientStegoId)
+                        .where('status', isEqualTo: 'accepted')
+                        .snapshots(),
+              builder: (context, sharedSnapshot) {
+                if (sharedSnapshot.connectionState == ConnectionState.waiting &&
+                    recipientStegoId.isNotEmpty) {
+                  return const SliverToBoxAdapter(
+                    child: Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    ),
+                  );
+                }
+
+                if (sharedSnapshot.hasError) {
+                  return SliverToBoxAdapter(
+                    child: Text(
+                      'Failed to load snaps: ${sharedSnapshot.error}',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  );
+                }
+
+                final ownDocs = (ownSnapshot.data?.docs ?? [])
+                    .where((doc) {
+                      final title = (doc.data()['title'] ?? '')
+                          .toString()
+                          .toLowerCase();
+                      return _searchQuery.isEmpty ||
+                          title.contains(_searchQuery);
+                    })
+                    .map(
+                      (doc) => {
+                        ...doc.data(),
+                        'id': doc.id,
+                        'isSharedReceived': false,
+                      },
+                    )
+                    .toList();
+
+                final sharedDocs = (sharedSnapshot.data?.docs ?? [])
+                    .where((doc) {
+                      final title = (doc.data()['stegoTitle'] ?? '')
+                          .toString()
+                          .toLowerCase();
+                      return _searchQuery.isEmpty ||
+                          title.contains(_searchQuery);
+                    })
+                    .map(
+                      (doc) => {
+                        ...doc.data(),
+                        'id': (doc.data()['stegoFileId'] ?? doc.id).toString(),
+                        'shareFileId': doc.id,
+                        'isSharedReceived': true,
+                      },
+                    )
+                    .toList();
+
+                final allSnaps = [...ownDocs, ...sharedDocs];
+                if (allSnaps.isEmpty) {
+                  return const SliverToBoxAdapter(
+                    child: Text(
+                      'No snap data found',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontFamily: 'Poppins',
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  );
+                }
+                return SliverMasonryGrid.count(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 5,
+                  childCount: allSnaps.length,
+                  itemBuilder: (context, index) {
+                    return _buildCard(allSnaps[index]);
+                  },
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildDecodedSnapGrid() {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) {
+      return const SliverToBoxAdapter(
+        child: Text(
+          'No snap data found',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontFamily: 'Poppins',
+          ),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _firestoreService.getAllSnap(),
+      stream: FirebaseFirestore.instance
+          .collection('decoded_files')
+          .where('userId', isEqualTo: currentUserId)
+          .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SliverToBoxAdapter(
@@ -415,12 +568,11 @@ class _HomePageState extends State<HomePage> {
         final docs = snapshot.data?.docs ?? [];
         final filteredDocs = docs.where((doc) {
           final data = doc.data();
-          final title = (data['title'] ?? '').toString().toLowerCase();
-          if (_searchQuery.isNotEmpty && !title.contains(_searchQuery)) {
+          final decodedText = (data['decodedText'] ?? '')
+              .toString()
+              .toLowerCase();
+          if (_searchQuery.isNotEmpty && !decodedText.contains(_searchQuery)) {
             return false;
-          }
-          if (_selectedTab == 1) {
-            return (data['decoded_text'] ?? '').toString().isNotEmpty;
           }
           return true;
         }).toList();
@@ -446,9 +598,27 @@ class _HomePageState extends State<HomePage> {
           childCount: filteredDocs.length,
           itemBuilder: (context, index) {
             final doc = filteredDocs[index];
-            final data = doc.data();
-            final snap = {...data, 'id': doc.id};
-            return _buildCard(snap);
+            final decodedData = {...doc.data(), 'decodedFileId': doc.id};
+            return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              future: FirebaseFirestore.instance
+                  .collection('stego_files')
+                  .doc((decodedData['stegoFileId'] ?? '').toString())
+                  .get(),
+              builder: (context, stegoSnapshot) {
+                final stegoData =
+                    stegoSnapshot.data?.data() ?? <String, dynamic>{};
+                final combinedSnap = {
+                  ...stegoData,
+                  ...decodedData,
+                  'id':
+                      (decodedData['stegoFileId'] ??
+                              decodedData['decodedFileId'])
+                          .toString(),
+                  'stegoFileId': (decodedData['stegoFileId'] ?? '').toString(),
+                };
+                return _buildCard(combinedSnap);
+              },
+            );
           },
         );
       },
@@ -456,8 +626,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildCard(Map<String, dynamic> snap) {
-    final imageUrl = _buildImageUrl(snap);
-    final title = (snap['title'] ?? '').toString();
+    final imageUrl = _snapImageUrl(snap).isNotEmpty == true
+        ? _snapImageUrl(snap)
+        : null;
+    final title = (snap['title'] ?? snap['stegoTitle'] ?? '').toString();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -518,6 +690,7 @@ class _HomePageState extends State<HomePage> {
 
   void _showOptionImage(BuildContext context, Map<String, dynamic> snap) {
     _activeSnap = snap;
+    final isSharedReceived = snap['isSharedReceived'] == true;
 
     showModalBottomSheet(
       context: context,
@@ -540,9 +713,9 @@ class _HomePageState extends State<HomePage> {
                         Expanded(
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(20),
-                            child: (_buildImageUrl(snap) != null)
+                            child: _snapImageUrl(snap).isNotEmpty
                                 ? Image.network(
-                                    _buildImageUrl(snap)!,
+                                    _snapImageUrl(snap),
                                     fit: BoxFit.cover,
                                     errorBuilder: (context, error, stackTrace) {
                                       return Image.asset(
@@ -560,7 +733,7 @@ class _HomePageState extends State<HomePage> {
                         SizedBox(height: 8),
                         Text(
                           (snap['title'] ?? '').toString(),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.white,
                             fontFamily: 'Poppins',
                             fontSize: 14,
@@ -575,6 +748,7 @@ class _HomePageState extends State<HomePage> {
                 _buildDynamicContent(
                   context,
                   modalState,
+                  isSharedReceived,
                   (val) => setModalState(() => modalState = val),
                 ),
               ],
@@ -588,8 +762,13 @@ class _HomePageState extends State<HomePage> {
   Widget _buildDynamicContent(
     BuildContext context,
     int modalState,
+    bool isSharedReceived,
     Function(int) setModalState,
   ) {
+    if (isSharedReceived) {
+      return _buildDownloadForm();
+    }
+
     switch (modalState) {
       case 0:
         return _buildOptionMenu(setModalState);

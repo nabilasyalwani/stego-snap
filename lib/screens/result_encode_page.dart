@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'dart:io';
 import 'package:stego_snap/utils/colors.dart';
 import 'package:stego_snap/screens/nav_page.dart';
 import 'package:stego_snap/services/firestore_service.dart';
@@ -11,23 +11,20 @@ import 'package:stego_snap/widgets/custom_iconbutton.dart';
 import 'package:stego_snap/widgets/buttom_sheet_container.dart';
 import 'package:stego_snap/widgets/buttom_sheet_header.dart';
 import 'package:stego_snap/widgets/custom_textfield.dart';
+import 'dart:io';
 
 class ResultEncodePage extends StatefulWidget {
   final String title;
+  final String stegoFileId;
   final String? encodedImageUrl;
-  final String? encodedFileName;
-  final String? stegoServerPath;
   final String? secretData;
-  final String? snapId;
 
   const ResultEncodePage({
     super.key,
+    required this.stegoFileId,
     this.title = "Title Image",
     this.encodedImageUrl,
-    this.encodedFileName,
-    this.stegoServerPath,
     this.secretData = "This is your secret data",
-    this.snapId,
   });
 
   @override
@@ -36,6 +33,7 @@ class ResultEncodePage extends StatefulWidget {
 
 class _ResultEncodePageState extends State<ResultEncodePage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final User? _currentUser = FirebaseAuth.instance.currentUser;
   static const int _downloadModalState = 1;
   static const int _shareModalState = 2;
   static const int _renameModalState = 3;
@@ -44,6 +42,11 @@ class _ResultEncodePageState extends State<ResultEncodePage> {
   String? title;
   late String _currentTitle;
   final isLoading = false;
+
+  String _safeFileName(String value, {String fallback = 'encoded_image.jpg'}) {
+    final sanitized = value.trim().replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    return sanitized.isEmpty ? fallback : sanitized;
+  }
 
   @override
   void initState() {
@@ -73,9 +76,7 @@ class _ResultEncodePageState extends State<ResultEncodePage> {
         return;
       }
 
-      final fileName =
-          widget.encodedFileName ??
-          'encoded_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final fileName = _safeFileName(title ?? _currentTitle);
       final outputFile = File('${Directory.systemTemp.path}/$fileName');
       await outputFile.writeAsBytes(response.bodyBytes);
 
@@ -108,19 +109,11 @@ class _ResultEncodePageState extends State<ResultEncodePage> {
       return;
     }
 
-    final snapId = widget.snapId;
-    if (snapId == null || snapId.isEmpty) {
-      await NotificationService.createNotification(
-        id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
-        title: 'Rename Failed',
-        body: 'Snap id is not available.',
-      );
-      return;
-    }
+    final snapId = widget.stegoFileId;
 
     try {
       await FirestoreService().renameSnapById(
-        snapId: snapId,
+        stegoFileId: snapId,
         newTitle: newTitle,
       );
 
@@ -158,20 +151,11 @@ class _ResultEncodePageState extends State<ResultEncodePage> {
       return;
     }
 
-    final snapId = widget.snapId;
-    if (snapId == null || snapId.isEmpty) {
-      await NotificationService.createNotification(
-        id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
-        title: 'Share Failed',
-        body: 'Snap id is not available.',
-      );
-      return;
-    }
-
+    final snapId = widget.stegoFileId;
     try {
       await FirestoreService().shareSnapToUserId(
-        snapId: snapId,
-        userId: userId,
+        stegoFileId: snapId,
+        toUserId: userId,
       );
 
       await NotificationService.createNotification(
