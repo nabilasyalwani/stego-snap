@@ -6,6 +6,10 @@
 
 ---
 
+<img width="1080" height="1350" alt="Instagram post - 1" src="https://github.com/user-attachments/assets/151987b0-7e12-440f-9bdf-a0334ad3cea9" />
+
+<img width="1200" height="1600" alt="image 2" src="https://github.com/user-attachments/assets/9e680a41-7b61-4b21-9fa1-d90011ca0f3c" />
+
 ## Overview
 
 **StegoSnap** adalah aplikasi berbasis **mobile (Flutter)** dengan backend **FastAPI** yang memungkinkan pengguna untuk menyembunyikan (encode) dan mengungkap (decode) pesan rahasia di dalam gambar menggunakan metode **Turtle Shell**.
